@@ -303,6 +303,42 @@ func mainCore() error {
 	// WaitGroup for the monitor goroutines
 	var wg sync.WaitGroup
 
+
+	// Start web API
+	app := newContext(dcrdClient, &sqliteDB, cfg.IndentJSON)
+	// Start notification hander to keep /status up-to-date
+	wg.Add(1)
+	go app.StatusNtfnHandler(&wg, quit)
+	// Initial setting of db_height. Subsequently, Store() will send this.
+	ntfnChans.updateStatusDBHeight <- uint32(sqliteDB.GetHeight())
+
+	apiMux := newAPIRouter(app, cfg.UseRealIP)
+
+	// Start the explorer system
+	explore := explorer.New(&sqliteDB, db, cfg.UseRealIP)
+	explore.UseSIGToReloadTemplates()
+
+	webMux := chi.NewRouter()
+	webMux.Get("/", webUI.RootPage)
+	webMux.Get("/ws", webUI.WSBlockUpdater)
+	webMux.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./public/images/favicon.ico")
+	})
+	cacheControlMaxAge := int64(cfg.CacheControlMaxAge)
+	FileServer(webMux, "/js", http.Dir("./public/js"), cacheControlMaxAge)
+	FileServer(webMux, "/css", http.Dir("./public/css"), cacheControlMaxAge)
+	FileServer(webMux, "/fonts", http.Dir("./public/fonts"), cacheControlMaxAge)
+	FileServer(webMux, "/images", http.Dir("./public/images"), cacheControlMaxAge)
+	webMux.With(SearchPathCtx).Get("/error/{search}", webUI.ErrorPage)
+	webMux.NotFound(webUI.ErrorPage)
+	webMux.Mount("/api", apiMux.Mux)
+	webMux.Mount("/explorer", explore.Mux)
+	if err = listenAndServeProto(cfg.APIListen, cfg.APIProto, webMux); err != nil {
+		log.Criticalf("listenAndServeProto: %v", err)
+		close(quit)
+	}
+
+
 	// Blockchain monitor for the collector
 	addrMap := make(map[string]txhelpers.TxAction) // for support of watched addresses
 	// On reorg, only update web UI since dcrsqlite's own reorg handler will
@@ -396,39 +432,7 @@ func mainCore() error {
 		return fmt.Errorf("RPC client error: %v (%v)", cerr.Error(), cerr.Cause())
 	}
 
-	// Start web API
-	app := newContext(dcrdClient, &sqliteDB, cfg.IndentJSON)
-	// Start notification hander to keep /status up-to-date
-	wg.Add(1)
-	go app.StatusNtfnHandler(&wg, quit)
-	// Initial setting of db_height. Subsequently, Store() will send this.
-	ntfnChans.updateStatusDBHeight <- uint32(sqliteDB.GetHeight())
-
-	apiMux := newAPIRouter(app, cfg.UseRealIP)
-
-	// Start the explorer system
-	explore := explorer.New(&sqliteDB, db, cfg.UseRealIP)
-	explore.UseSIGToReloadTemplates()
-
-	webMux := chi.NewRouter()
-	webMux.Get("/", webUI.RootPage)
-	webMux.Get("/ws", webUI.WSBlockUpdater)
-	webMux.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "./public/images/favicon.ico")
-	})
-	cacheControlMaxAge := int64(cfg.CacheControlMaxAge)
-	FileServer(webMux, "/js", http.Dir("./public/js"), cacheControlMaxAge)
-	FileServer(webMux, "/css", http.Dir("./public/css"), cacheControlMaxAge)
-	FileServer(webMux, "/fonts", http.Dir("./public/fonts"), cacheControlMaxAge)
-	FileServer(webMux, "/images", http.Dir("./public/images"), cacheControlMaxAge)
-	webMux.With(SearchPathCtx).Get("/error/{search}", webUI.ErrorPage)
-	webMux.NotFound(webUI.ErrorPage)
-	webMux.Mount("/api", apiMux.Mux)
-	webMux.Mount("/explorer", explore.Mux)
-	if err = listenAndServeProto(cfg.APIListen, cfg.APIProto, webMux); err != nil {
-		log.Criticalf("listenAndServeProto: %v", err)
-		close(quit)
-	}
+	//start web here
 
 	// Wait for notification handlers to quit
 	wg.Wait()
