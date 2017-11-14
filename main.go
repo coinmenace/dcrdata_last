@@ -337,8 +337,7 @@ func mainCore() error {
 		log.Criticalf("listenAndServeProto: %v", err)
 		close(quit)
 	}
-
-	//space
+	
 
 
 	// Blockchain monitor for the collector
