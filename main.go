@@ -338,6 +338,8 @@ func mainCore() error {
 		close(quit)
 	}
 
+	//space
+
 
 	// Blockchain monitor for the collector
 	addrMap := make(map[string]txhelpers.TxAction) // for support of watched addresses
